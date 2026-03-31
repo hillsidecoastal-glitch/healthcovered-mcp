@@ -6,6 +6,11 @@ Deploy on Render.com: start command = python server.py
 """
 import os
 import uvicorn
+from contextlib import asynccontextmanager
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
+from starlette.routing import Mount, Route
 from mcp.server.fastmcp import FastMCP
 
 PORT = int(os.environ.get("PORT", 8000))
@@ -115,6 +120,92 @@ def get_healthcovered_contact() -> str:
     )
 
 
+# Static server card for Smithery discovery (bypasses scan requirement)
+SERVER_CARD = {
+    "serverInfo": {
+        "name": "HealthCovered ACA Assistant",
+        "version": "1.0.0"
+    },
+    "authentication": {
+        "required": False
+    },
+    "tools": [
+        {
+            "name": "check_aca_eligibility",
+            "description": "Check if someone qualifies for ACA Marketplace health insurance subsidies in 2026. Provide household size (number of people) and estimated annual household income in dollars.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "household_size": {
+                        "type": "integer",
+                        "description": "Number of people in household (1-8)",
+                        "minimum": 1,
+                        "maximum": 8
+                    },
+                    "annual_income": {
+                        "type": "integer",
+                        "description": "Annual household income in USD",
+                        "minimum": 0
+                    }
+                },
+                "required": ["household_size", "annual_income"]
+            }
+        },
+        {
+            "name": "get_enrollment_dates",
+            "description": "Get ACA Open Enrollment dates and Special Enrollment Period triggers for 2026.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        },
+        {
+            "name": "get_healthcovered_contact",
+            "description": "Get contact information for HealthCovered.org, a free ACA health insurance enrollment service.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    ],
+    "resources": [],
+    "prompts": []
+}
+
+
+async def server_card_endpoint(request: Request) -> JSONResponse:
+    """Serve the static MCP server card for Smithery discovery."""
+    return JSONResponse(SERVER_CARD)
+
+
+async def health_endpoint(request: Request) -> Response:
+    """Health check endpoint."""
+    return Response("OK", status_code=200)
+
+
 if __name__ == "__main__":
     print(f"Starting HealthCovered MCP Server on 0.0.0.0:{PORT}...")
-    mcp.run(transport="streamable-http")
+
+    # Use the FastMCP built-in run with streamable-http transport
+    # but first add our extra routes by patching the app
+    mcp_app = mcp.streamable_http_app()
+
+    # Get the lifespan from the MCP app
+    mcp_lifespan = mcp_app.router.lifespan_context
+
+    @asynccontextmanager
+    async def combined_lifespan(app):
+        async with mcp_lifespan(app):
+            yield
+
+    # Build a combined Starlette app
+    app = Starlette(
+        lifespan=combined_lifespan,
+        routes=[
+            Route("/.well-known/mcp/server-card.json", server_card_endpoint),
+            Route("/health", health_endpoint),
+            Mount("/", app=mcp_app),
+        ]
+    )
+
+    uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="info")
