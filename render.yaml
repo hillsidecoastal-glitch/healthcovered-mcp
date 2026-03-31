@@ -3,8 +3,9 @@ services:
     name: healthcovered-mcp
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: mcp run server.py --transport sse --port $PORT
+    startCommand: python server.py
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.0
+        value: "3.11.0"
     plan: free
+    healthCheckPath: /mcp
