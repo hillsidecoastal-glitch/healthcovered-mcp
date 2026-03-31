@@ -1,1 +1,1 @@
-web: mcp run server.py --transport sse --port $PORT
+web: python server.py
